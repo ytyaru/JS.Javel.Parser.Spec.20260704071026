@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>マルチ認証テスト</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f0f2f5; }
+        .card { background: white; padding: 20px; border-radius: 8px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; }
+        input, select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        hr { margin: 20px 0; border: 0; border-top: 1px solid #eee; }
+        
+        /* 【ハック】人間には見えないが、ブラウザのパスワードマネージャーには認識されるフォーム */
+        .hidden-crypto-form {
+            position: fixed;
+            left: -9999px;
+            top: -9999px;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            opacity: 0;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h3>マルチサービス ログインUI</h3>
+    
+    <div class="form-group">
+        <label>サービス種別</label>
+        <select id="service-type" onchange="switchService()">
+            <option value="bsky">BlueSky</option>
+            <option value="mastodon">Mastodon</option>
+            <option value="misskey">Misskey</option>
+        </select>
+    </div>
+
+    <!-- 各サービス用の動的入力エリア -->
+    <div id="dynamic-fields"></div>
+
+    <button type="button" onclick="saveToBrowser()">ログイン情報をブラウザに保存</button>
+</div>
+
+<!-- 【ハック】ブラウザを騙して記憶・補完させるための隠しフォーム -->
+<!-- ※保存時や復元時にブラウザが「ログインフォーム」と確信するように、ダミーのactionを設定 -->
+<form id="dummy-auth-form" class="hidden-crypto-form" action="/dummy-login-success" method="POST">
+    <!-- ユーザー名欄：ここにクリックかフォーカスが入るとブラウザが保存リストを出す -->
+    <input type="text" id="dummy-username" autocomplete="username" placeholder="ダミーユーザー名">
+    <input type="password" id="dummy-password" autocomplete="current-password" placeholder="ダミーパスワード">
+    <button type="submit" id="dummy-submit-btn">Submit</button>
+</form>
+
+<script>
+// UIの表示切り替え
+function switchService() {
+    const type = document.getElementById('service-type').value;
+    const container = document.getElementById('dynamic-fields');
+    
+    if (type === 'bsky') {
+        container.innerHTML = `
+            <div class="form-group"><label>ハンドル名</label><input type="text" id="bsky-handle" placeholder="example.bsky.social"></div>
+            <div class="form-group"><label>アプリパスワード</label><input type="password" id="bsky-pw" placeholder="xxxx-xxxx-xxxx-xxxx"></div>
+        `;
+    } else {
+        container.innerHTML = `
+            <div class="form-group"><label>インスタンス（ドメイン）</label><input type="text" id="ap-domain" placeholder="mstdn.jp"></div>
+            <div class="form-group"><label>ユーザー名</label><input type="text" id="ap-username" placeholder="username"></div>
+            <div class="form-group"><label>AccessToken</label><input type="password" id="ap-token" placeholder="アクセストークン"></div>
+        `;
+    }
+}
+
+// 1. 保存処理（実際のUIに入力された内容をパッキングしてダミーを送信する）
+function saveToBrowser() {
+    const type = document.getElementById('service-type').value;
+    let packedUsername = "";
+    let packedPassword = "";
+
+    if (type === 'bsky') {
+        const handle = document.getElementById('bsky-handle').value;
+        const pw = document.getElementById('bsky-pw').value;
+        if(!handle || !pw) return alert("入力してください");
+        
+        packedUsername = `bsky:${handle}`;
+        packedPassword = pw;
+    } else {
+        const domain = document.getElementById('ap-domain').value;
+        const user = document.getElementById('ap-username').value;
+        const token = document.getElementById('ap-token').value;
+        if(!domain || !user || !token) return alert("入力してください");
+        
+        packedUsername = `${type}:${domain}:${user}`;
+        packedPassword = token;
+    }
+
+    // ダミーフォームに値を流し込む
+    document.getElementById('dummy-username').value = packedUsername;
+    document.getElementById('dummy-password').value = packedPassword;
+
+    // フォームのsubmitイベントを乗っ取ってリロードを防ぎつつ、ブラウザに「ログイン成功」と誤認させる
+    const form = document.getElementById('dummy-auth-form');
+    
+    const submitHandler = (e) => {
+        e.preventDefault(); // 実際のページ遷移を絶対に止める
+        alert("ブラウザへの送信をシミュレートしました。http://localhost 等の環境であれば、ここで画面上部に『パスワードを保存しますか？』のダイアログが出現します。");
+        form.removeEventListener('submit', submitHandler);
+    };
+    
+    form.addEventListener('submit', submitHandler);
+    document.getElementById('dummy-submit-btn').click(); // 擬似クリック
+}
+
+// 2. 復元処理（ブラウザがダミーフォームに自動注入した値を検知してUIにバラす）
+function restoreFromDummy() {
+    const dummyUser = document.getElementById('dummy-username').value;
+    const dummyPw = document.getElementById('dummy-password').value;
+
+    if (!dummyUser || !dummyPw) return; // まだブラウザが値を注入していなければスキップ
+
+    const parts = dummyUser.split(':');
+    const type = parts[0];
+
+    if (type === 'bsky') {
+        document.getElementById('service-type').value = 'bsky';
+        switchService();
+        document.getElementById('bsky-handle').value = parts[1];
+        document.getElementById('bsky-pw').value = dummyPw;
+    } else if (type === 'mastodon' || type === 'misskey') {
+        document.getElementById('service-type').value = type;
+        switchService();
+        document.getElementById('ap-domain').value = parts[1];
+        document.getElementById('ap-username').value = parts[2];
+        document.getElementById('ap-token').value = dummyPw;
+    }
+}
+
+// 初期実行
+switchService();
+
+// ブラウザが自動補完（注入）した瞬間をキャッチするため、定期的に隠しフォームを監視する
+setInterval(restoreFromDummy, 500);
+</script>
+
+</body>
+</html>
+

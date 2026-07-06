@@ -1,0 +1,28 @@
+<style>
+.hidden-crypto-form {
+  position: absolute;
+  position: fixed;
+  left: -9999px; /* 画面の外にはじき出す */
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;    /* 透明にする */
+}
+</style>
+
+<!-- 人間が操作する実際のスタイリッシュな画面（例：MastodonやBlueskyを選んで入力する場所） -->
+<div id="real-ui">
+  <!-- ここはただの通常のテキストボックス。ブラウザの補完をあえて発生させない -->
+  <input type="text" id="ui-domain" placeholder="mstdn.jp">
+  <input type="text" id="ui-username" placeholder="ユーザー名">
+  <input type="password" id="ui-token" placeholder="トークン/パスワード">
+  <button type="button" onclick="handleLoginSubmit()">ログイン保存</button>
+</div>
+
+<!-- 【ハック】ブラウザのパスワードマネージャーを騙すためのダミーフォーム -->
+<form id="dummy-auth-form" class="hidden-crypto-form">
+  <input type="text" id="dummy-username" autocomplete="username">
+  <input type="password" id="dummy-password" autocomplete="current-password">
+  <button type="submit" id="dummy-submit-btn">Submit</button>
+</form>

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>マルチ認証テスト（Class構造版）</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f0f2f5; }
+        .card { background: white; padding: 20px; border-radius: 8px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; }
+        input, select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        
+        /* 【ハック】人間には見えないがブラウザには認識されるフォーム */
+        .hidden-crypto-form {
+            position: fixed;
+            left: -9999px;
+            top: -9999px;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            opacity: 0;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h3>マルチサービス ログインUI</h3>
+    
+    <div class="form-group">
+        <label>サービス種別</label>
+        <select id="service-type">
+            <option value="bsky">BlueSky</option>
+            <option value="mastodon">Mastodon</option>
+            <option value="misskey">Misskey</option>
+        </select>
+    </div>
+
+    <!-- 各サービス用の入力エリア -->
+    <div id="dynamic-fields"></div>
+
+    <button type="button" id="save-btn">ログイン情報をブラウザに保存</button>
+</div>
+
+<!-- 【ハック】ブラウザのパスワードマネージャー連携用フォーム -->
+<form id="dummy-auth-form" class="hidden-crypto-form" action="/dummy-login-success" method="POST">
+    <input type="text" id="dummy-username" autocomplete="username">
+    <input type="password" id="dummy-password" autocomplete="current-password">
+    <button type="submit" id="dummy-submit-btn">Submit</button>
+</form>
+
+<script>
+// ==========================================
+// 1. データ変換（パッキング）クラス
+// ==========================================
+class DataPacker {
+    // 画面の入力データを、ブラウザ用の「ユーザー名」「パスワード」の2本に結合
+    static pack(type, values) {
+        if (type === 'bsky') {
+            return {
+                username: `bsky:${values.handle}`,
+                password: values.pw
+            };
+        } else {
+            return {
+                username: `${type}:${values.domain}:${values.username}`,
+                password: values.token
+            };
+        }
+    }
+
+    // ブラウザから取得した文字列を分解。配列インデックスバグを完全修正
+    static unpack(usernameStr, passwordStr) {
+        if (!usernameStr || !passwordStr) return null;
+        
+        const parts = usernameStr.split(':');
+        const type = parts[0]; // 修正：文字配列の0番目を型として抽出
+
+        if (type === 'bsky') {
+            return {
+                type: 'bsky',
+                handle: parts[1] || "",
+                pw: passwordStr
+            };
+        } else if (type === 'mastodon' || type === 'misskey') {
+            return {
+                type: type,
+                domain: parts[1] || "",   // 修正：1番目をドメインに
+                username: parts[2] || "", // 修正：2番目をユーザー名に
+                token: passwordStr
+            };
+        }
+        return null;
+    }
+}
+
+// ==========================================
+// 2. UI・画面表示 管理クラス
+// ==========================================
+class UIManager {
+    constructor() {
+        this.typeSelect = document.getElementById('service-type');
+        this.container = document.getElementById('dynamic-fields');
+    }
+
+    // 選択されたサービスに合わせてHTMLを生成
+    renderFields(type) {
+        if (type === 'bsky') {
+            this.container.innerHTML = `
+                <div class="form-group"><label>ハンドル名</label><input type="text" id="bsky-handle" placeholder="example.bsky.social"></div>
+                <div class="form-group"><label>アプリパスワード</label><input type="password" id="bsky-pw" placeholder="xxxx-xxxx-xxxx-xxxx"></div>
+            `;
+        } else {
+            this.container.innerHTML = `
+                <div class="form-group"><label>インスタンス（ドメイン）</label><input type="text" id="ap-domain" placeholder="mstdn.jp"></div>
+                <div class="form-group"><label>ユーザー名</label><input type="text" id="ap-username" placeholder="username"></div>
+                <div class="form-group"><label>AccessToken</label><input type="password" id="ap-token" placeholder="アクセストークン"></div>
+            `;
+        }
+    }
+
+    // 現在の入力欄から値を取得
+    getFormValues(type) {
+        if (type === 'bsky') {
+            return {
+                handle: document.getElementById('bsky-handle')?.value || "",
+                pw: document.getElementById('bsky-pw')?.value || ""
+            };
+        } else {
+            return {
+                domain: document.getElementById('ap-domain')?.value || "",
+                username: document.getElementById('ap-username')?.value || "",
+                token: document.getElementById('ap-token')?.value || ""
+            };
+        }
+    }
+
+    // 分解されたデータを各テキストボックスへ正しく流し込む
+    setFormValues(data) {
+        this.typeSelect.value = data.type;
+        this.renderFields(data.type);
+
+        if (data.type === 'bsky') {
+            document.getElementById('bsky-handle').value = data.handle;
+            document.getElementById('bsky-pw').value = data.pw;
+        } else {
+            document.getElementById('ap-domain').value = data.domain;
+            document.getElementById('ap-username').value = data.username;
+            document.getElementById('ap-token').value = data.token;
+        }
+    }
+}
+
+// ==========================================
+// 3. ブラウザ自動補完 監視・制御クラス
+// ==========================================
+class BrowserAuthManager {
+    constructor(uiManager) {
+        this.ui = uiManager;
+        this.timerId = null;
+        this.dummyUser = document.getElementById('dummy-username');
+        this.dummyPw = document.getElementById('dummy-password');
+        this.form = document.getElementById('dummy-auth-form');
+    }
+
+    // 擬似Submitでブラウザに記憶ダイアログを出させる
+    triggerSave(packedData) {
+        this.dummyUser.value = packedData.username;
+        this.dummyPw.value = packedData.password;
+
+        const submitHandler = (e) => {
+            e.preventDefault(); 
+            alert("ブラウザのパスワードマネージャーへデータを送信しました。");
+            this.form.removeEventListener('submit', submitHandler);
+        };
+
+        this.form.addEventListener('submit', submitHandler);
+        document.getElementById('dummy-submit-btn').click();
+    }
+
+    // 定期監視を開始
+    startAutofillWatcher() {
+        if (this.timerId) return;
+
+        this.timerId = setInterval(() => {
+            const restoredData = DataPacker.unpack(this.dummyUser.value, this.dummyPw.value);
+            if (restoredData) {
+                // 正しくバラされたデータをUIに反映
+                this.ui.setFormValues(restoredData);
+                // ループ防止のため即座に監視をシャットダウン
+                this.stopAutofillWatcher();
+            }
+        }, 500);
+    }
+
+    // 監視を完全に停止
+    stopAutofillWatcher() {
+        if (this.timerId) {
+            clearInterval(this.timerId);
+            this.timerId = null;
+        }
+    }
+
+    // 隠しダミーフォームを完全に空っぽにする（切り替え時の干渉防止）
+    clearDummyForm() {
+        this.dummyUser.value = "";
+        this.dummyPw.value = "";
+    }
+}
+
+// ==========================================
+// 実行制御（エントリーポイント）
+// ==========================================
+const ui = new UIManager();
+const auth = new BrowserAuthManager(ui);
+
+// 画面初期表示（デフォルト：BlueSky）
+ui.renderFields('bsky');
+auth.startAutofillWatcher();
+
+// 修正：ユーザーがセレクトボックスを手動で切り替えた時のイベント
+document.getElementById('service-type').addEventListener('change', (e) => {
+    // 他のサービスへの自動上書きを完全に防ぐため、監視を止めてダミーの中身を消去
+    auth.stopAutofillWatcher();
+    auth.clearDummyForm();
+    
+    // 選択されたサービスの真っ白なフォームを生成
+    ui.renderFields(e.target.value);
+});
+
+// 保存ボタンが押されたとき
+document.getElementById('save-btn').addEventListener('click', () => {
+    const type = document.getElementById('service-type').value;
+    const values = ui.getFormValues(type);
+    
+    if (type === 'bsky' && (!values.handle || !values.pw)) return alert("値を入力してください");
+    if (type !== 'bsky' && (!values.domain || !values.username || !values.token)) return alert("値を入力してください");
+
+    const packed = DataPacker.pack(type, values);
+    auth.triggerSave(packed);
+});
+
+// ユーザーが「別のアカウントを選び直したい」時のために、ダミーフォーム周辺にフォーカスが来たら監視を再開
+document.getElementById('dummy-auth-form').addEventListener('focusin', () => {
+    auth.startAutofillWatcher();
+});
+</script>
+
+</body>
+</html>
+
